@@ -179,11 +179,10 @@ class CustomDataParallel(nn.DataParallel):
         # that no scatter is necessary, and there's no need to shuffle stuff around different GPUs.
         devices = ['cuda:' + str(x) for x in range(self.num_gpus)]
         splits = inputs[0].shape[0] // self.num_gpus
-
-        return [(inputs[0][splits * device_idx: splits * (device_idx + 1)].to(f'cuda:{device_idx}', non_blocking=True),
-                 inputs[1][splits * device_idx: splits * (device_idx + 1)].to(f'cuda:{device_idx}', non_blocking=True))
-                for device_idx in range(len(devices))], \
-               [kwargs] * len(devices)
+        c_inputs = [inputs[0].contiguous(), inputs[1].contiguous()]
+        return [(c_inputs[0][splits * device_idx: splits * (device_idx + 1)].to(f'cuda:{device_idx}', non_blocking=True),
+                 c_inputs[1][splits * device_idx: splits * (device_idx + 1)].to(f'cuda:{device_idx}', non_blocking=True))
+                for device_idx in range(len(devices))], [kwargs] * len(devices)
 
 
 def get_last_weights(weights_path):

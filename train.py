@@ -20,6 +20,8 @@ from tqdm.autonotebook import tqdm
 
 from efficientdet.loss import FocalLoss
 from utils.utils import replace_w_sync_bn, CustomDataParallel, get_last_weights, init_weights
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 
 class Params:
@@ -57,11 +59,32 @@ def get_args():
     parser.add_argument('--load_weights', type=str, default=None,
                         help='whether to load weights from a checkpoint, set None to initialize, set \'last\' to load last checkpoint')
     parser.add_argument('--saved_path', type=str, default='logs/')
-    parser.add_argument('--debug', type=bool, default=False, help='whether visualize the predicted boxes of trainging, '
+    parser.add_argument('--debug', type=bool, default=False, help='whether visualize the predicted boxes of training, '
                                                                   'the output images will be in test/')
 
     args = parser.parse_args()
     return args
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1, reset_interval=20):
+        if self.count == reset_interval:
+            self.reset()
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
 class ModelWithLoss(nn.Module):
@@ -82,7 +105,9 @@ class ModelWithLoss(nn.Module):
 
 
 def train(opt):
+    print(opt)
     params = Params(f'projects/{opt.project}.yml')
+    total_loss = AverageMeter()
 
     if params.num_gpus == 0:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -185,8 +210,9 @@ def train(opt):
     else:
         optimizer = torch.optim.SGD(model.parameters(), opt.lr, momentum=0.9, nesterov=True)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[6, 11], gamma=0.1)
 
+    lr = opt.lr
     epoch = 0
     best_loss = 1e5
     best_epoch = 0
@@ -231,11 +257,12 @@ def train(opt):
                     optimizer.step()
 
                     epoch_loss.append(float(loss))
+                    total_loss.update(loss.item())
 
                     progress_bar.set_description(
-                        'Step: {}. Epoch: {}/{}. Iteration: {}/{}. Cls loss: {:.5f}. Reg loss: {:.5f}. Total loss: {:.5f}'.format(
-                            step, epoch, opt.num_epochs, iter + 1, num_iter_per_epoch, cls_loss.item(),
-                            reg_loss.item(), loss.item()))
+                        'Step: {}. Epoch: {}/{}. Iteration: {}/{}. Lr: {}. Cls loss: {:.5f}. Reg loss: {:.5f}. Total loss: {:.5f}({:.3f})'.format(
+                            step, epoch, opt.num_epochs, iter + 1, num_iter_per_epoch, lr, cls_loss.item(),
+                            reg_loss.item(), loss.item(), total_loss.avg))
                     writer.add_scalars('Loss', {'train': loss}, step)
                     writer.add_scalars('Regression_loss', {'train': reg_loss}, step)
                     writer.add_scalars('Classfication_loss', {'train': cls_loss}, step)
@@ -254,7 +281,8 @@ def train(opt):
                     print('[Error]', traceback.format_exc())
                     print(e)
                     continue
-            scheduler.step(np.mean(epoch_loss))
+            scheduler.step()
+            lr = optimizer.param_groups[0]['lr']
 
             if epoch % opt.val_interval == 0:
                 model.eval()
