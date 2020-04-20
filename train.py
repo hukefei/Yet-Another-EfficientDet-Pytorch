@@ -79,9 +79,7 @@ class AverageMeter(object):
         self.sum = 0
         self.count = 0
 
-    def update(self, val, n=1, reset_interval=20):
-        if self.count == reset_interval:
-            self.reset()
+    def update(self, val, n=1):
         self.val = val
         self.sum += val * n
         self.count += n
@@ -289,6 +287,7 @@ def train(opt):
                     continue
             scheduler.step()
             lr = optimizer.param_groups[0]['lr']
+            total_loss.reset()
 
             if epoch % opt.val_interval == 0:
                 model.eval()
